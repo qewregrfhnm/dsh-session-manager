@@ -37,9 +37,13 @@ import {
   PAUSE_ROUTE,
   PURGE_ROUTE,
   RESTORE_ROUTE,
+  EXPORT_ROUTE,
+  RENAME_ROUTE,
   TRASH_ROUTE,
   type ActionResultResponse,
+  type ExportSessionResponse,
   type MoveWorkspaceRequest,
+  type RenameSessionResponse,
   type TrashEntry,
   type TrashListResponse,
 } from '../contract.ts'
@@ -1005,6 +1009,14 @@ function stringsOf() {
         fork: '新聊天中继续',
         forkFailed: '创建子会话失败',
         forkUnavailable: '当前回合尚未结束，无法在此处切分',
+        rename: '重命名',
+        renamePrompt: '请输入会话的新名称：',
+        renamed: '已重命名会话',
+        renameFailed: '重命名失败',
+        exportMd: '导出 Markdown',
+        exportJson: '导出 JSON',
+        exported: '已开始下载导出文件',
+        exportFailed: '导出失败',
         more: '更多',
         batchDelete: '批量删除',
         batchDeleteConfirm: '确定删除选中的 {count} 个会话吗？它们会移入回收站，可在「回收站」中恢复或彻底删除。',
@@ -1115,6 +1127,14 @@ function stringsOf() {
         fork: 'Continue in new chat',
         forkFailed: 'Failed to fork session',
         forkUnavailable: 'the current turn is still open; it cannot be forked here',
+        rename: 'Rename',
+        renamePrompt: 'Enter a new name for the session:',
+        renamed: 'Session renamed',
+        renameFailed: 'Rename failed',
+        exportMd: 'Export Markdown',
+        exportJson: 'Export JSON',
+        exported: 'Download started',
+        exportFailed: 'Export failed',
         more: 'More',
         batchDelete: 'Delete selected',
         batchDeleteConfirm: 'Delete the {count} selected sessions? They move to the trash, where you can restore or permanently delete them.',
@@ -1206,6 +1226,9 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   const unread = useUnread()
   const [moveOpenId, setMoveOpenId] = useState<string | null>(null)
   const [moreOpenId, setMoreOpenId] = useState<string | null>(null)
+  // Locally overridden session titles (from a rename RPC) so rows update
+  // instantly; the wire list carries the same title once refreshed.
+  const [renamedTitles, setRenamedTitles] = useState<Record<string, string>>({})
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'unread' | 'archived'>('all')
   const [dragSessionId, setDragSessionId] = useState<string | null>(null)
@@ -1357,6 +1380,12 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
     .map((id) => list.byId[id])
     .filter((session): session is SessionSummary =>
       session !== undefined && !removed.has(session.id) && !session.blank)
+    .map((session) => {
+      const renamed = renamedTitles[session.id]
+      return renamed !== undefined && renamed !== session.displayTitle
+        ? { ...session, displayTitle: renamed }
+        : session
+    })
   const activeRows = summaries.filter((session) => !archivedSet.has(session.id))
   const archivedRows = summaries.filter((session) => archivedSet.has(session.id) && !trashIds.has(session.id))
 
@@ -1895,6 +1924,82 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
     }
   }, [strings, showNotice])
 
+  // Rename one session: ask for the new name, POST to the host route, and
+  // reflect the accepted title locally (the wire list catches up on refresh).
+  const handleRename = useCallback(async (sessionId: string, currentTitle: string): Promise<void> => {
+    const input = window.prompt(strings.renamePrompt, currentTitle)
+    if (input === null) return
+    const title = input.trim()
+    if (title === '' || title === currentTitle) return
+    setBusyId(sessionId)
+    setNotice(null)
+    try {
+      const response = await fetch(RENAME_ROUTE, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, title }),
+      })
+      const data = (await response.json().catch(() => ({}))) as RenameSessionResponse
+      if (!response.ok || data.ok !== true) throw new Error(data.error ?? `HTTP ${response.status}`)
+      const acceptedTitle = data.title
+      if (acceptedTitle !== undefined && acceptedTitle !== '') {
+        setRenamedTitles((previous) => {
+          const next: Record<string, string> = { ...previous }
+          next[sessionId] = acceptedTitle
+          return next
+        })
+      }
+      showNotice({ kind: 'ok', text: strings.renamed })
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ''
+      const suffix = code !== '' ? ` (${code})` : ''
+      showNotice({ kind: 'error', text: strings.renameFailed + suffix })
+    } finally {
+      setBusyId(null)
+    }
+  }, [strings, showNotice])
+
+  // Export one session: ask the host for the rendered transcript and trigger
+  // a browser download of the Markdown or JSON file.
+  const handleExport = useCallback(async (sessionId: string, format: 'markdown' | 'json'): Promise<void> => {
+    setBusyId(sessionId)
+    setNotice(null)
+    try {
+      const response = await fetch(EXPORT_ROUTE, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, format }),
+      })
+      const data = (await response.json().catch(() => ({}))) as ExportSessionResponse
+      if (!response.ok || data.ok !== true || data.content === undefined) {
+        throw new Error(data.error ?? `HTTP ${response.status}`)
+      }
+      const session = list.byId[sessionId as SessionId]
+      const base = (renamedTitles[sessionId] ?? session?.displayTitle ?? sessionId)
+        .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+        .trim()
+        .slice(0, 60) || 'session'
+      const blob = new Blob([data.content], {
+        type: format === 'json' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8',
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${base}-${sessionId.slice(0, 8)}.${format}`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+      showNotice({ kind: 'ok', text: strings.exported })
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ''
+      const suffix = code !== '' ? ` (${code})` : ''
+      showNotice({ kind: 'error', text: strings.exportFailed + suffix })
+    } finally {
+      setBusyId(null)
+    }
+  }, [strings, showNotice, list.byId, renamedTitles])
+
   const renderStatsDialog = (): ReactElement | null => {
     if (statsId === null || stats === null) return null
     const sessionTitle = list.byId[statsId as SessionId]?.displayTitle ?? statsId
@@ -2098,6 +2203,33 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
               void handleFork(session.id)
             },
           }, strings.fork),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleRename(session.id, session.displayTitle)
+            },
+          }, strings.rename),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleExport(session.id, 'markdown')
+            },
+          }, strings.exportMd),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleExport(session.id, 'json')
+            },
+          }, strings.exportJson),
           createElement('button', {
             type: 'button',
             className: 'dsh-delete-session__more-item',

@@ -19,6 +19,10 @@ export declare const PAUSE_ROUTE = "/dsh-session-manager/pause";
 export declare const COMPACTION_THRESHOLD_ROUTE = "/dsh-session-manager/compaction-threshold";
 /** Move one session into another workspace (artifact move + re-account). */
 export declare const MOVE_WORKSPACE_ROUTE = "/dsh-session-manager/move-workspace";
+/** Rename one session: the title is written as a durable session/title event. */
+export declare const RENAME_ROUTE = "/dsh-session-manager/rename";
+/** Export one session transcript as Markdown or JSON for download. */
+export declare const EXPORT_ROUTE = "/dsh-session-manager/export";
 /** POST /dsh-session-manager/move-workspace request body. */
 export interface MoveWorkspaceRequest {
     sessionId: string;
@@ -57,5 +61,36 @@ export interface TrashListResponse {
     entries: TrashEntry[];
     /** Maximum entries kept; the oldest overflow is purged automatically. */
     limit: number;
+}
+/** POST /dsh-session-manager/rename request body. */
+export interface RenameSessionRequest {
+    sessionId: string;
+    /** Raw user title text; the host normalizes acceptance. */
+    title: string;
+}
+/** POST /dsh-session-manager/rename response body. */
+export interface RenameSessionResponse {
+    ok: boolean;
+    /** Machine-readable failure reason. */
+    error?: string;
+    /** The normalized accepted title. */
+    title?: string;
+    /** Seq of the appended session/title event. */
+    seq?: number;
+}
+/** POST /dsh-session-manager/export request body. */
+export interface ExportSessionRequest {
+    sessionId: string;
+    format: 'markdown' | 'json';
+}
+/** POST /dsh-session-manager/export response body. */
+export interface ExportSessionResponse {
+    ok: boolean;
+    /** Machine-readable failure reason. */
+    error?: string;
+    /** Echo of the requested format. */
+    format?: 'markdown' | 'json';
+    /** The rendered export text (Markdown or JSON). */
+    content?: string;
 }
 //# sourceMappingURL=contract.d.ts.map

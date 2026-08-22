@@ -22,6 +22,8 @@
 - **拖拽移动**：直接把会话行拖到目标工作区标题上即可完成移动（目标高亮提示）；运行中的会话不可拖
 - **批量移动**：勾选多个会话后点「移动到…」选目标工作区，一次搬入（运行中的会话自动跳过并在提示中说明）
 - **移动到新工作区**：「移动到…」菜单新增「＋新建工作区（会话所在目录）」——把会话的原始目录注册为工作区并移入，未注册路径的会话从此有了归属
+- **会话重命名**：会话行「更多」菜单新增「重命名」——新名称以官方 session/title 事件（来源 user）写入日志，自动标题不再覆盖；运行中会话走官方 sessionTitle.rename，冷会话由 host 直接追加事件帧并同步持久投影缓存，侧边栏与列表标题即时更新、重启不丢
+- **导出会话**：「更多」菜单新增「导出 Markdown」「导出 JSON」——Markdown 为可读对话记录（轮次 / 用户 / 助手 / 工具调用与结果），JSON 为无损事件日志（会话头 + 全部事件，含 seq/time）；浏览器直接下载，文件名含会话标题与短 id
 - **上下文压缩阈值**（通用设置）：设置对话上下文用到模型窗口（100 万 token）的多少比例时自动压缩（17%–90%），每次压缩保留最近 16% 原文；**对所有 Agent 预设的会话统一生效**（保存即时 + 持久化 + 重启自动应用）
 - 删除限制：仅禁止删除「正在思考」的会话；当前打开的会话（空闲）可删除
 - 子代理（subagent）会话支持删除（非运行中）：即使主会话已删除、子代理成为「孤儿」，也能在会话管理中直接清理
@@ -73,7 +75,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-session-manager-0.3.0.tgz
 3. 主列表为未归档会话；底部「已归档会话」折叠区可展开查看、**恢复**或删除归档会话
 4. 删除会话 → 进入底部「回收站」折叠区（保留最近 10 条）
 5. 回收站内可 **恢复**（回到会话列表）或 **彻底删除**（永久清除，不可恢复）
-6. 行内仅保留 **删除** 按钮；其余操作统一收进「**更多**」菜单：**继续会话**（打开并进入对话）、**暂停**（停止正在运行的回合）、**恢复**（归档会话）、**新聊天中继续**、**统计**（展开近期活动）、**文件夹**（打开日志目录）、**移动到…**——会话名称不再被按钮遮挡
+6. 行内仅保留 **删除** 按钮；其余操作统一收进「**更多**」菜单：**继续会话**（打开并进入对话）、**暂停**（停止正在运行的回合）、**恢复**（归档会话）、**新聊天中继续**、**重命名**（输入新名称，回车确认）、**导出 Markdown / 导出 JSON**（直接下载到浏览器）、**统计**（展开近期活动）、**文件夹**（打开日志目录）、**移动到…**——会话名称不再被按钮遮挡
 7. 顶部**搜索框**按标题 / 工作目录过滤；**状态筛选**：全部 / 运行中 / 未读 / 已归档
 8. **拖拽会话行**到某个工作区标题上直接移动（目标虚线高亮）；**批量移动**：勾选后点「移动到…」选目标工作区
 9. 「移动到…」菜单里的 **＋新建工作区（会话所在目录）** 会把会话的原始目录注册为新工作区并移入
@@ -112,11 +114,13 @@ dsh plugin --profile web add /absolute/path/to/dsh-session-manager-0.3.0.tgz
 
 | 层 | 实现 |
 |---|---|
-| Host | `src/index.ts` 注册 8 条路由：`POST /delete`（归档 + 非 live 会话文件移入回收站 + 记录条目）、`POST /restore`（文件移回 + 取消归档 + 删除条目）、`POST /purge`（清除回收站与原位置文件 + 删除条目）、`GET /trash`（回收站列表）、`POST /open-folder`（打开日志目录）、`POST /pause`（暂停运行中会话）、`POST /move-workspace`（移动会话到其他工作区）、`GET|POST /compaction-threshold`（读写全局压缩阈值）。通过 `ctx.sessionPersistence` 定位会话、`ctx.workspaceRegistry` 归档/取消归档/移动、`ctx.storageDomain` 持久化回收站条目、归档集合与阈值；`ctx.agents` 检测运行中的会话并拒绝删除/移动 |
+| Host | `src/index.ts` 注册 10 条路由：`POST /delete`（归档 + 非 live 会话文件移入回收站 + 记录条目）、`POST /restore`（文件移回 + 取消归档 + 删除条目）、`POST /purge`（清除回收站与原位置文件 + 删除条目）、`GET /trash`（回收站列表）、`POST /open-folder`（打开日志目录）、`POST /pause`（暂停运行中会话）、`POST /move-workspace`（移动会话到其他工作区）、`GET|POST /compaction-threshold`（读写全局压缩阈值）、`POST /rename`（重命名：live 走官方 `sessionTitle.rename`，冷会话追加 `session/title` 事件帧 + 更新持久投影缓存）、`POST /export`（导出：`sessionPersistence.inspect` 解码日志后渲染 Markdown / JSON）。通过 `ctx.sessionPersistence` 定位会话、`ctx.workspaceRegistry` 归档/取消归档/移动、`ctx.storageDomain` 持久化回收站条目、归档集合与阈值；`ctx.agents` 检测运行中的会话并拒绝删除/移动 |
 | Client | `src/client/index.ts` 通过官方 `settings.section` 插槽注册独立分栏，用 `useSessions` / `useWorkspaces` 标准数据源列出会话（含归档/回收站分组），删除/恢复/彻底删除/移动调用 host 路由；抽屉通过 `sessions.list`（ObservableSnapshot）订阅实时列表；彻底删除的会话 id 记录在浏览器 localStorage，避免 live 会话删除后刷新「复活」 |
 
 - **未读机制**：手动未读集保存在浏览器 localStorage 的共享 key `dsh.session-unread.v1`（`{version:1, ids:[]}` 格式，与其他会话管理插件互通）；官方状态点（琥珀/绿色/转圈）由官方 `SessionSummary` 的 `pendingInteraction` / `completed` / `running` 字段驱动，点击就地已读通过清除官方提醒标记实现，无需打开会话；侧边栏的蓝色未读点由 MutationObserver 装饰官方树节点（官方行元素没有会话 id 属性，故按标题文本匹配）
 - **移动到工作区**：host 读取会话原始 zstd 日志，把**首帧**改写为只含一行会话头（`cwd` 更新为目标工作区路径），事件帧原样保留（DSH 要求首帧恰好一行头部，单帧重写会被判定为 corrupt）；日志目录先改名搬入目标工作区目录，再写回新文件；最后更新工作区记账（旧组 `detachSession` + 新组 `attachSession`）。任一步失败都会回滚：**先把目录改回原名**，再恢复原始文件字节，绝不先删后移
+- **会话重命名**：标题即日志中的 `session/title` 事件（官方 `@deepseek-ai/dsh-session-title` 服务，来源 `user` 会钉住标题，自动标题不再覆盖）。live 会话直接调用官方 `rename`；冷会话 host 自算续接 seq（兼容打包分片行 `seq0` + 成员跨度）后追加一个事件帧（zstd 首帧仍只含会话头），并把 `title` 行写进官方持久投影缓存（`session_projcache`，`ver: 1` 匹配官方单元版本），列表与侧边栏立即显示新标题
+- **导出**：host 用官方 `sessionPersistence.inspect` 拿到解码后的平衡事件视图（打包分片行已还原、损坏尾部不进入），导出构建器为纯函数（`src/export.ts`，含单测）；Markdown 渲染轮次 / 用户 / 助手消息与工具调用/结果（结果截断 4000 字符），JSON 为无损完整事件日志
 - **压缩阈值全局生效**：保存在存储域（`dsh_delete_session` 的 `thresholdRatio`）；如果默认 Agent 预设是用户预设，则同时写入 agent-presets 服务解析出的 `agent.cordis.yml`，系统预设文件保持只读。host 在每个 `agent/pre-step` 钩子里把阈值写入所有预设的压缩引擎配置，因此对所有 Agent 预设的会话统一生效，重启后依然有效
 - 删除时先走官方归档通道：侧边栏立即隐藏该会话
 - 回收站条目持久化在 DSH 存储域（`~/.dsh/storages/dsh_delete_session.json`），文件在 `~/.dsh/dsh-delete-session-trash/`

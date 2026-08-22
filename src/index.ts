@@ -49,6 +49,7 @@ import { spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { zstdCompress } from 'node:zlib'
 import { basename, dirname, join } from 'node:path'
+import { buildSessionJson, buildSessionMarkdown, foldTitle } from './export.ts'
 
 export const name = 'dsh-session-manager'
 export const inject = [
@@ -121,6 +122,99 @@ function trashRoot(): string {
 }
 function trashSessionDir(sessionId: string): string {
   return join(trashRoot(), sessionId)
+}
+
+/** Byte budget for user-supplied session titles (matches the official service's range). */
+const MAX_TITLE_UTF8_BYTES = 300
+
+/**
+ * Normalize a user-supplied session title for the cold (not-live) rename
+ * path: strip invisible/directional controls, collapse whitespace, trim, and
+ * enforce the UTF-8 byte budget. The official sessionTitle service applies
+ * its own (equivalent) normalization on the live path.
+ */
+function normalizeTitle(input: string): string {
+  const cleaned = input
+    .replace(/[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (Buffer.byteLength(cleaned, 'utf8') <= MAX_TITLE_UTF8_BYTES) return cleaned
+  let end = cleaned.length
+  while (end > 0 && Buffer.byteLength(cleaned.slice(0, end), 'utf8') > MAX_TITLE_UTF8_BYTES) end -= 1
+  return cleaned.slice(0, end)
+}
+
+/**
+ * Last persisted event seq inside a raw artifact. Handles both plain event
+ * lines (`seq`) and packed chunk rows (`seq0` + member span) so an appended
+ * session/title event always continues the stored sequence — the backend
+ * rejects any batch whose first seq does not continue the log.
+ */
+function storedLastSeq(content: string): number {
+  let last = -1
+  const lines = content.split('\n')
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (line === '') continue
+    try {
+      const parsed = JSON.parse(line) as { seq?: unknown; seq0?: unknown; data?: { texts?: unknown; args?: unknown } }
+      if (typeof parsed.seq === 'number' && Number.isSafeInteger(parsed.seq)) {
+        if (parsed.seq > last) last = parsed.seq
+      } else if (typeof parsed.seq0 === 'number' && Number.isSafeInteger(parsed.seq0)) {
+        const members = Array.isArray(parsed.data?.texts)
+          ? parsed.data.texts.length
+          : Array.isArray(parsed.data?.args)
+            ? parsed.data.args.length
+            : 0
+        const end = parsed.seq0 + Math.max(members, 1) - 1
+        if (end > last) last = end
+      }
+    } catch {
+      // Skip unparseable lines; the header (line 0) is intentionally skipped.
+    }
+  }
+  return last
+}
+
+/**
+ * Write the title row into the persisted projection cache so cold listings
+ * (session.list rows) serve the renamed title without waiting for a live
+ * fold. The row version must match the title unit's stateVersion (1); a
+ * mismatched identity (deleted-then-recreated id, swapped root) discards the
+ * stale record instead of seeding it.
+ */
+async function updateProjectionTitle(
+  ctx: Context,
+  id: SessionId,
+  meta: { createdAt: number; cwd?: string },
+  seq: number,
+  title: string,
+): Promise<void> {
+  try {
+    const proj = ctx.storageDomain.get('session_projcache') as
+      | {
+          table(name: string): {
+            get(key: string): {
+              identity: { createdAt: number; cwd?: string }
+              rows: Record<string, { ver: number; seq: number; val: unknown }>
+            } | undefined
+            put(key: string, value: unknown): Promise<void>
+          }
+        }
+      | undefined
+    if (proj === undefined) return
+    const sessions = proj.table('sessions')
+    const existing = sessions.get(id)
+    const identity = { createdAt: meta.createdAt, cwd: meta.cwd }
+    const base = existing !== undefined
+      && existing.identity.createdAt === meta.createdAt
+      && existing.identity.cwd === meta.cwd
+      ? existing.rows
+      : {}
+    await sessions.put(id, { identity, rows: { ...base, title: { ver: 1, seq, val: title } } })
+  } catch (error) {
+    ctx.logger.warn(`[dsh-session-manager] projection cache title update failed for ${id}:`, error)
+  }
 }
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -936,6 +1030,145 @@ export function apply(ctx: Context): Promise<() => Promise<void>> {
           const detail = error instanceof Error ? error.message : String(error)
           ctx.logger.warn('[dsh-session-manager] move-workspace failed:', error)
           respond(res, 500, { ok: false, error: 'move-failed', detail })
+        }
+      },
+    })
+
+
+    // POST /dsh-session-manager/rename — set a session's display title.
+    //
+    // Live sessions: the official sessionTitle service appends a
+    // `session/title` event (source `user`) through the session's own write
+    // controller, which pins the title and broadcasts it to every client.
+    //
+    // Cold sessions: append the same event line directly to the artifact (a
+    // fresh zstd frame, continuing the stored seq) and write the title row
+    // into the persisted projection cache so session.list rows serve it
+    // immediately. The cache row is only a shortcut — the log event is the
+    // durable source of truth, so a later live fold agrees with it.
+    ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_PREFIX}/rename`,
+      handler: async (req, res) => {
+        if (req.method !== 'POST') return respond(res, 405, { ok: false, error: 'method-not-allowed' })
+        let body: unknown
+        try {
+          body = await readJsonBody(req)
+        } catch {
+          return respond(res, 400, { ok: false, error: 'bad-request' })
+        }
+        const id = parseSessionId(body)
+        const rawTitle = (body as { title?: unknown } | null)?.title
+        if (id === undefined || typeof rawTitle !== 'string' || rawTitle.trim() === '') {
+          return respond(res, 400, { ok: false, error: 'title-invalid' })
+        }
+
+        try {
+          await withMutationLock(async () => {
+            // Live path: the official service owns the write controller.
+            const agent = ctx.agents.get(id)
+            if (agent !== undefined) {
+              const titles = ctx.get('sessionTitle') as
+                | { rename(session: unknown, title: string): { title: string; eventSeq: number } }
+                | undefined
+              const session = (agent as { session?: unknown }).session
+              if (titles === undefined || session === undefined) {
+                return respond(res, 500, { ok: false, error: 'title-unavailable' })
+              }
+              try {
+                const accepted = titles.rename(session, rawTitle)
+                ctx.logger.info(`[dsh-session-manager] renamed live ${id} to "${accepted.title}"`)
+                return respond(res, 200, { ok: true, title: accepted.title, seq: accepted.eventSeq })
+              } catch (error) {
+                if (error instanceof Error && error.name === 'SessionTitleInvalidError') {
+                  return respond(res, 400, { ok: false, error: 'title-invalid' })
+                }
+                throw error
+              }
+            }
+
+            // Cold path: append the event line to the artifact ourselves.
+            const title = normalizeTitle(rawTitle)
+            if (title === '') return respond(res, 400, { ok: false, error: 'title-invalid' })
+            const headers = await labeled('list', () => ctx.sessionPersistence.list())
+            const meta = headers.find((header) => header.id === id)
+            if (meta === undefined) {
+              return respond(res, 404, { ok: false, error: 'session-not-found' })
+            }
+            const raw = await labeled('readRaw', () => ctx.sessionPersistence.readRaw(id))
+            if (raw === undefined) {
+              return respond(res, 404, { ok: false, error: 'no-artifact' })
+            }
+            const nextSeq = storedLastSeq(raw.content) + 1
+            const line = JSON.stringify({
+              seq: nextSeq,
+              time: Date.now(),
+              type: 'session/title',
+              data: { title, messageSeqs: [], source: { kind: 'user' } },
+            })
+            const lines = raw.content.split('\n')
+            while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
+            if (lines.length === 0) {
+              return respond(res, 500, { ok: false, error: 'empty-artifact' })
+            }
+            const headerLine = lines[0]
+            const restLines = lines.slice(1)
+            restLines.push(line)
+            // The backend's zstd layout requires the FIRST frame to hold
+            // exactly the header line; all event lines live in later frames.
+            const headerFrame = await promisify(zstdCompress)(Buffer.from(headerLine + '\n', 'utf8'))
+            const eventFrame = await promisify(zstdCompress)(Buffer.from(restLines.join('\n') + '\n', 'utf8'))
+            const compressed = Buffer.concat([headerFrame, eventFrame])
+            const location = ctx.sessionPersistence.locate(meta)
+            if (location === undefined) {
+              return respond(res, 500, { ok: false, error: 'no-artifact-location' })
+            }
+            const tmp = location.path + '.rename-tmp'
+            await writeFile(tmp, compressed)
+            await rename(tmp, location.path)
+            await updateProjectionTitle(ctx, id, meta, nextSeq, title)
+            ctx.logger.info(`[dsh-session-manager] renamed ${id} to "${title}"`)
+            respond(res, 200, { ok: true, title, seq: nextSeq })
+          })
+        } catch (error) {
+          ctx.logger.warn('[dsh-session-manager] rename failed:', error)
+          respond(res, 500, { ok: false, error: 'rename-failed' })
+        }
+      },
+    })
+
+    // POST /dsh-session-manager/export — render one session's decoded log as
+    // Markdown (readable transcript) or JSON (lossless events), for a browser
+    // download. Works for live sessions too (their current immutable snapshot
+    // is served) and never mutates the log.
+    ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_PREFIX}/export`,
+      handler: async (req, res) => {
+        if (req.method !== 'POST') return respond(res, 405, { ok: false, error: 'method-not-allowed' })
+        let body: unknown
+        try {
+          body = await readJsonBody(req)
+        } catch {
+          return respond(res, 400, { ok: false, error: 'bad-request' })
+        }
+        const id = parseSessionId(body)
+        const rawFormat = (body as { format?: unknown } | null)?.format
+        if (id === undefined || (rawFormat !== 'markdown' && rawFormat !== 'json')) {
+          return respond(res, 400, { ok: false, error: 'invalid-request' })
+        }
+        const format = rawFormat
+
+        try {
+          const inspection = await labeled('inspect', () => ctx.sessionPersistence.inspect(id))
+          const title = foldTitle(inspection.events)
+          const content = format === 'json'
+            ? buildSessionJson(inspection.meta, inspection.events)
+            : buildSessionMarkdown(inspection.meta, inspection.events, title)
+          respond(res, 200, { ok: true, format, content })
+        } catch (error) {
+          ctx.logger.warn(`[dsh-session-manager] export failed for ${id}:`, error)
+          respond(res, 500, { ok: false, error: 'export-failed' })
         }
       },
     })

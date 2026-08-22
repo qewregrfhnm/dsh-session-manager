@@ -1,5 +1,17 @@
 # 更新日志 (Changelog)
 
+## v0.4.0 (2026-08-22)
+
+### 新增
+
+- **会话重命名**：会话行「更多」菜单新增「重命名」，输入新名称后写入日志中的 session/title 事件（来源 user，与官方重命名一致，自动标题不再覆盖）。运行中会话走官方 sessionTitle.rename；冷会话由 host 直接追加事件帧并同步持久投影缓存，侧边栏与列表标题即时更新、重启不丢
+- **导出会话**：「更多」菜单新增「导出 Markdown」「导出 JSON」：Markdown 为可读对话记录（轮次 / 用户 / 助手 / 工具调用与结果），JSON 为无损事件日志（会话头 + 全部事件，含 seq/time）；浏览器直接下载，文件名含会话标题与短 id
+- host 新增 POST /dsh-session-manager/rename、POST /dsh-session-manager/export 两条路由；导出复用官方 sessionPersistence.inspect（解码打包分片行、平衡视图），不修改日志
+
+### 工程
+
+- 导出构建器为纯函数模块 src/export.ts，新增 13 个单元测试（共 16 个全部通过）
+
 ## v0.3.2 (2026-08-22)
 
 ### 新增
