@@ -1132,6 +1132,7 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
   const unread = useUnread()
   const [moveOpenId, setMoveOpenId] = useState<string | null>(null)
+  const [moreOpenId, setMoreOpenId] = useState<string | null>(null)
   const [newestFirst, setNewestFirst] = useState(true)
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null)
   // Drop slot: 'before:<id>' inserts before that workspace, 'end' appends.
@@ -1149,6 +1150,19 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
     noticeTimer.current = window.setTimeout(() => setNotice(null), 3500)
   }, [])
   useEffect(() => () => window.clearTimeout(noticeTimer.current), [])
+
+  // Close the per-row "More" menu on outside pointer-down.
+  useEffect(() => {
+    if (moreOpenId === null && moveOpenId === null) return
+    const onPointerDown = (event: MouseEvent): void => {
+      if (!(event.target instanceof Element)) return
+      if (event.target.closest('.dsh-delete-session__more-wrap') !== null) return
+      setMoreOpenId(null)
+      setMoveOpenId(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [moreOpenId, moveOpenId])
 
   const loadTrash = useCallback(async (): Promise<void> => {
     try {
@@ -1853,85 +1867,106 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
         ),
         createElement('div', { className: 'dsh-delete-session__row-meta', title: metaParts.join(' · ') }, metaParts.join(' · ')),
       ),
-      createElement(Button, {
-        className: 'dsh-row-action',
-        variant: 'outline',
-        size: 'sm',
-        disabled: isRunning || busy,
-        title: isRunning ? strings.running : strings.continue,
-        onClick: () => handleContinue(session.id),
-        children: strings.continue,
-      }),
-      createElement(Button, {
-        className: 'dsh-row-action',
-        variant: 'outline',
-        size: 'sm',
-        disabled: isRunning || busy,
-        title: strings.fork,
-        onClick: () => void handleFork(session.id),
-        children: strings.fork,
-      }),
-      isRunning && createElement(Button, {
-        className: 'dsh-row-action',
-        variant: 'outline',
-        size: 'sm',
-        disabled: busy,
-        onClick: () => void handlePause(session.id),
-        children: strings.pause,
-      }),
-      isArchived && createElement(Button, {
-        className: 'dsh-row-action',
-        variant: 'outline',
-        size: 'sm',
-        disabled: busy,
-        onClick: () => void handleRestore(session.id, session.displayTitle),
-        children: strings.restore,
-      }),
-      createElement(Button, {
-        className: 'dsh-row-action',
-        variant: 'outline',
-        size: 'sm',
-        disabled: busy,
-        onClick: () => void handleStats(session.id),
-        children: strings.stats,
-      }),
-      createElement(Button, {
-        className: 'dsh-row-action',
-        variant: 'outline',
-        size: 'sm',
-        disabled: busy,
-        onClick: () => void handleOpenFolder(session.id),
-        children: strings.folder,
-      }),
       createElement('span', { className: 'dsh-delete-session__more-wrap' },
         createElement(Button, {
           className: 'dsh-row-action',
           variant: 'outline',
           size: 'sm',
-          disabled: isRunning || busy || isArchived || session.cwd === undefined,
-          title: strings.moveToWorkspace,
-          onClick: () => setMoveOpenId(moveOpenId === session.id ? null : session.id),
-          children: strings.moveTo,
+          disabled: busy,
+          title: strings.more,
+          onClick: () => {
+            setMoveOpenId(null)
+            setMoreOpenId(moreOpenId === session.id ? null : session.id)
+          },
+          children: strings.more,
         }),
-        moveOpenId === session.id && createElement('div', { className: 'dsh-delete-session__more-menu' },
-          ...(() => {
-            const targets = workspaces.items.filter((view) => !view.sessionIds.includes(session.id))
-            return targets.length > 0
-              ? targets.map((view) =>
-                  createElement('button', {
+        moreOpenId === session.id && createElement('div', { className: 'dsh-delete-session__more-menu' },
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: isRunning || busy,
+            title: isRunning ? strings.running : strings.continue,
+            onClick: () => {
+              setMoreOpenId(null)
+              handleContinue(session.id)
+            },
+          }, strings.continue),
+          isRunning && createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handlePause(session.id)
+            },
+          }, strings.pause),
+          isArchived && createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleRestore(session.id, session.displayTitle)
+            },
+          }, strings.restore),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: isRunning || busy,
+            title: isRunning ? strings.running : strings.fork,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleFork(session.id)
+            },
+          }, strings.fork),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleStats(session.id)
+            },
+          }, strings.stats),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: busy,
+            onClick: () => {
+              setMoreOpenId(null)
+              void handleOpenFolder(session.id)
+            },
+          }, strings.folder),
+          createElement('button', {
+            type: 'button',
+            className: 'dsh-delete-session__more-item',
+            disabled: isRunning || busy || isArchived || session.cwd === undefined,
+            title: strings.moveToWorkspace,
+            onClick: () => setMoveOpenId(moveOpenId === session.id ? null : session.id),
+          }, strings.moveTo),
+          moveOpenId === session.id && createElement('div', { className: 'dsh-delete-session__more-menu dsh-delete-session__move-menu' },
+            ...(() => {
+              const targets = workspaces.items.filter((view) => !view.sessionIds.includes(session.id))
+              return targets.length > 0
+                ? targets.map((view) =>
+                    createElement('button', {
+                      type: 'button',
+                      key: view.workspaceId,
+                      className: 'dsh-delete-session__more-item',
+                      disabled: busy,
+                      onClick: () => {
+                        setMoreOpenId(null)
+                        void handleMoveToWorkspace(session.id, view.workspaceId)
+                      },
+                    }, view.title || view.path))
+                : [createElement('button', {
                     type: 'button',
-                    key: view.workspaceId,
+                    key: '__none__',
                     className: 'dsh-delete-session__more-item',
-                    disabled: busy,
-                    onClick: () => void handleMoveToWorkspace(session.id, view.workspaceId),
-                  }, view.title || view.path))
-              : [createElement('button', {
-                  type: 'button',
-                  key: '__none__',
-                  className: 'dsh-delete-session__more-item',
-                  disabled: true,
-                }, strings.moveNoTargets)]
-          })(),
+                    disabled: true,
+                  }, strings.moveNoTargets)]
+            })(),
+          ),
         ),
       ),
       createElement(Button, {

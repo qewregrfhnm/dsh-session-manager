@@ -67,7 +67,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-session-manager-0.3.0.tgz
 3. Main list = active sessions; bottom collapsible **Archived** area for restore / delete
 4. Delete → session goes to the **Trash** collapsible (keeps latest 10)
 5. Trash: **Restore** (back to the list) or **Purge** (permanent)
-6. Row actions: **Continue** / **Pause** / **Stats** / **Folder** / **Delete**
+6. Rows keep a single **Delete** button; everything else lives in the **More** menu: Continue / Pause / Restore (archived) / Fork / Stats / Folder / Move to… — session names are no longer covered by buttons
 7. Workspace header hover actions: **pin to top** / **rename** / **delete**
 8. Drag workspace headers to reorder (insert above/below, swap on top, drop to end)
 9. Sort toggle: newest-first / oldest-first
