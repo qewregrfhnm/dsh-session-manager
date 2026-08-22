@@ -1,157 +1,172 @@
-# dsh-session-manager
+# 🗂️ dsh-session-manager
+
+> One-stop session management for the DeepSeek Harness Web UI: delete (trash) / restore / rename / export / move between workspaces / batch actions, ready to use — **no DSH core changes**.
 
 English | [中文](README.md)
 
-A full-featured session manager for the DeepSeek Harness Web UI, reachable from both the Settings page and the conversation header: delete (trash / restore / purge), restore archived sessions, recent-activity stats, continue / pause, open the log folder, unread markers, fork into a new chat, workspace grouping & sorting, **move sessions to another workspace**, and a global context-compaction threshold. No harness changes.
+[![build](https://img.shields.io/github/actions/workflow/status/qewregrfhnm/dsh-session-manager/ci.yml?branch=main&label=build&logo=github)](https://github.com/qewregrfhnm/dsh-session-manager/actions)
+[![release](https://img.shields.io/github/v/release/qewregrfhnm/dsh-session-manager?sort=semver&label=release&color=4d6bfe)](https://github.com/qewregrfhnm/dsh-session-manager/releases)
+[![downloads](https://img.shields.io/github/downloads/qewregrfhnm/dsh-session-manager/total?color=16a34a)](https://github.com/qewregrfhnm/dsh-session-manager/releases)
+[![license](https://img.shields.io/github/license/qewregrfhnm/dsh-session-manager)](LICENSE)
+[![language](https://img.shields.io/badge/language-TypeScript-3178c6?logo=typescript&logoColor=white)](src)
+[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#compatibility)
+[![dsh](https://img.shields.io/badge/DSH-0.1.x%20rc-0f1115)](#compatibility)
 
-## Features
+## ✨ Highlights
 
-- Dedicated **Session Manager** section in Settings (a sibling of Notifications)
-- Lists all sessions (title / working directory); archived sessions in a collapsible footer area with **one-click restore**
-- **Trash**: deleted sessions move to a trash area (keeps the latest 10, auto-evicts the oldest), with **restore** or **purge**
-- **Stats**: per-session modal with recent activity (rounds / user messages / assistant messages / tool calls / activity window)
-- **Continue**: open a session and close the panel; **Pause**: stop the running round of a live session
-- **Unread / read** state dots: blue = manually unread, amber = official waiting-for-input, green = official completion notice, spinner = running; click an official dot to mark read in place; the official sidebar row gets a blue dot too
-- **Fork into a new chat**: one-click `sessions.fork` per session
-- **Open log folder** in the system file manager
-- **Delete this chat** button in the conversation header
-- **Session drawer** (pinnable, closes on outside click) with a per-row **More** menu: stats / folder / fork / **Move to…**
-- **Workspace management**: sessions grouped by workspace, sortable by last-used (newest/oldest), drag workspace headers to reorder (insert / swap / move to end), hover actions: pin to top / rename / delete
-- **Move to workspace**: move any non-live session (log folder, session-header cwd, and workspace bookkeeping) into another registered workspace — effective immediately, survives restarts
-- **Search & filter**: a top search box filters by title / working directory in real time, plus status chips (All / Running / Unread / Archived)
-- **Drag to move**: drag a session row onto a target workspace header to move it (drop target highlights); running sessions are not draggable
-- **Batch move**: select several sessions, click "Move to…" and pick a target workspace to move them at once (running sessions are skipped and reported)
-- **Move to a new workspace**: the "Move to…" menu gains "＋ New workspace (session directory)" — registers the session's own working directory as a workspace and moves it there, giving unregistered-path sessions a home
-- **Session rename**: "More" menu gains "Rename" — the new name is written to the log as an official `session/title` event (source `user`), so automatic retitling stops. Live sessions go through the official `sessionTitle.rename`; cold sessions get the event frame appended by the host plus a persisted projection-cache update — sidebar and list titles update immediately and survive restarts
-- **Export session**: "More" menu gains "Export Markdown" and "Export JSON" — Markdown is a readable transcript (turns / user / assistant / tool calls and results), JSON is the lossless event log (header + all events with seq/time); the browser downloads the file directly, named after the session title and a short id
-- **Context-compaction threshold** (General settings): auto-compact at 17%–90% of the model window (1M tokens), keeping the latest 16% verbatim; applies to **all agent presets** (saved instantly + persisted + reapplied on restart)
-- Deletion is blocked only for sessions currently thinking; the currently open (idle) session can be deleted
-- Subagent sessions can be deleted (when not running), including orphaned subagents whose parent is gone
-- UI language follows the DSH locale (zh / en)
+| Capability | Description |
+| --- | --- |
+| 🗑️ **Delete / Restore / Purge** | Deletes go to a trash area (keeps the latest 10, restore or purge); archived sessions restore in one click |
+| ✏️ **Session rename** | Written as an official `session/title` event — automatic retitling stops, survives restarts |
+| 📥 **Export Markdown / JSON** | Markdown = readable transcript; JSON = lossless event log; one-click browser download |
+| 📂 **Move to workspace** | Drag a session row onto a workspace header, or use "Move to…" (batch + **＋ New workspace**) |
+| 🔍 **Search & filter** | Real-time title / directory filter + All / Running / Unread / Archived chips |
+| 🔵 **Unread / read markers** | Manual unread, official waiting-input / completion dots; mark read in place |
+| 📊 **Activity stats** | Per-session turns / message counts / tool calls / activity window |
+| ⏯️ **Continue / Pause / Fork** | One-click continue (archived sessions auto-restore first), pause the running turn, fork a child chat |
+| 🗂️ **Workspace management** | Grouping, drag to reorder, pin-to-top / rename / delete workspaces |
+| ⚙️ **Global compaction threshold** | Applies to ALL agent presets; instant + persisted + reapplied on restart |
 
-## Install
+Also: **session drawer** in the conversation header (pinnable), **Delete this chat**, open log folders, orphaned-subagent cleanup, zh/en UI.
+
+## 📸 Screenshots
+
+> Demo UI with anonymized session titles and paths.
+
+| Session Manager overview (Settings) | Row "More" menu |
+| --- | --- |
+| ![Session Manager overview](assets/screenshots/session-manager-overview.png) | ![More menu](assets/screenshots/more-menu.png) |
+
+| Archived sessions & trash | Session drawer |
+| --- | --- |
+| ![Archived & trash](assets/screenshots/archived-trash.png) | ![Session drawer](assets/screenshots/drawer.png) |
+
+## 📦 Install
 
 ### Requirements
 
 - DSH CLI installed globally (`npm i -g @deepseek-ai/dsh`), `0.1.0-rc.6` or a same-generation `0.1.x` rc
-- Node.js `^22.19.0 || >=24.0.0`, pnpm `>=9` (DSH CLI forwards plugin management to pnpm)
+- Node.js `^22.19.0 || >=24.0.0`, pnpm `>=9` (the DSH CLI forwards plugin management to pnpm)
 
 ### From a GitHub Release (recommended)
 
-Replace `<user>` with the GitHub user/org that owns the repo:
-
 ```sh
-dsh plugin --profile web add 'https://github.com/<user>/dsh-session-manager/releases/download/v0.3.0/dsh-session-manager-0.3.0.tgz'
+dsh plugin --profile web add 'https://github.com/qewregrfhnm/dsh-session-manager/releases/download/v0.4.1/dsh-session-manager-0.4.1.tgz'
 ```
+
+> Latest version: see [Releases](https://github.com/qewregrfhnm/dsh-session-manager/releases) and swap the tag in the URL.
 
 ### From a GitHub tag
 
 ```sh
-dsh plugin --profile web add 'github:<user>/dsh-session-manager#v0.3.0'
+dsh plugin --profile web add 'github:qewregrfhnm/dsh-session-manager#v0.4.1'
 ```
 
 ### From a local directory / tarball
 
 ```sh
 dsh plugin --profile web add /absolute/path/to/dsh-session-manager
-# or, after pnpm pack
-dsh plugin --profile web add /absolute/path/to/dsh-session-manager-0.3.0.tgz
+# or, after packaging
+cd dsh-session-manager && pnpm pack
+dsh plugin --profile web add /absolute/path/to/dsh-session-manager-0.4.1.tgz
 ```
 
-> **Manual install (fallback if `dsh plugin` is unavailable)**: `dsh plugin` just forwards to pnpm inside the profile directory and syncs `dsh.profile.bundles`. To do it by hand:
-> 1. `cd ~/.dsh/profiles/web && pnpm add <spec-from-above>`
-> 2. Edit `package.json` and append `"dsh-session-manager"` to `dsh.profile.bundles`
->
-> **Restart `dsh web`** after installing (host plugin and the client bundle are loaded at boot).
+### Manual install (fallback if `dsh plugin` is unavailable)
 
-## Usage
+`dsh plugin` just forwards to pnpm inside the profile directory and syncs `dsh.profile.bundles`:
+
+```sh
+cd ~/.dsh/profiles/web
+pnpm add <spec-from-above>
+# then append "dsh-session-manager" to dsh.profile.bundles in package.json
+```
+
+> **Restart `dsh web` after installing** (host plugin and client bundle load at boot).
+
+## 🚀 Usage
 
 ### Session Manager in Settings
 
-1. Open **Settings** (gear icon) in the sidebar
-2. A dedicated **Session Manager** section appears in the left nav
-3. Main list = active sessions; bottom collapsible **Archived** area for restore / delete
-4. Delete → session goes to the **Trash** collapsible (keeps latest 10)
-5. Trash: **Restore** (back to the list) or **Purge** (permanent)
-6. Rows keep a single **Delete** button; everything else lives in the **More** menu: Continue / Pause / Restore (archived) / Fork / **Rename** (type the new name) / **Export Markdown / Export JSON** (direct download) / Stats / Folder / Move to… — session names are no longer covered by buttons
-7. The top **search box** filters by title / directory; **status chips**: All / Running / Unread / Archived
-8. **Drag a session row** onto a workspace header to move it (dashed highlight); **batch move**: select rows, click "Move to…" and pick a workspace
-9. The "Move to…" menu's **＋ New workspace (session directory)** registers the session's original directory as a new workspace and moves it in
-7. Workspace header hover actions: **pin to top** / **rename** / **delete**
-8. Drag workspace headers to reorder (insert above/below, swap on top, drop to end)
-9. Sort toggle: newest-first / oldest-first
+1. Open **Settings** (gear icon) → **Session Manager** in the left nav
+2. Active sessions are grouped by workspace; bottom collapsibles: **Archived sessions** and **Trash**
+3. Rows keep a single **Delete** button; everything else lives in the **More** menu:
+   **Continue** (archived sessions auto-restore first) / **Pause** / **Restore** / **Fork** / **Rename** / **Export Markdown / JSON** / **Stats** / **Folder** / **Move to…**
+4. Top **search box** + **status chips** (All / Running / Unread / Archived)
+5. **Drag** a session row onto a workspace header to move it; select rows for **batch move / batch delete**
+6. Workspace headers (hover): **pin to top / rename / delete**
+
+### Rename & export
+
+1. Row **More → Rename**: enter the new name — the title updates everywhere immediately
+2. **More → Export Markdown**: downloads a readable transcript (turns / user / assistant / tool calls & results)
+3. **More → Export JSON**: downloads the lossless event log (session header + all events with seq/time)
 
 ### Move a session to another workspace
 
-1. Open **Settings → Session Manager**, or the **Session drawer** from a conversation header
-2. On the row, open **More → Move to…** and pick the target workspace
-3. The session immediately appears under the target workspace; the log folder, session-header cwd, and workspace bookkeeping are updated atomically and survive restarts
+1. **More → Move to…** → pick the target workspace, or **drag the session row** onto a workspace header
+2. Log folder, session-header cwd, and workspace bookkeeping update atomically and survive restarts
+3. **＋ New workspace (session directory)** registers the session's own directory as a workspace
 
-> Move limits:
-> - **Running / loaded (live) sessions cannot be moved** — pause first, or restart `dsh web` to unload them
-> - Targets are **registered workspaces only**; an ungrouped session can be moved into a workspace, but paths outside the registered workspaces are not available as targets
+> Limits: **running / loaded (live) sessions cannot be moved** — pause first, or restart `dsh web` to unload.
 
-### General settings: context-compaction threshold
+### General settings · compaction threshold
 
-1. **Settings → General**
-2. Set 17%–90% via slider / input
-3. Takes effect immediately (including open sessions), applies to all agent presets, survives restarts
+**Settings → General**: auto-compact at 17%–90% of the model window, keeping the latest 16% verbatim; applies to ALL agent presets, effective immediately and persisted.
 
 ### Conversation-header shortcuts
 
-Top-right of any conversation (left of the session log): **Session drawer** (pinnable), **Trash**, **Delete this chat** (red).
+Top-right of any conversation: **Session drawer** (pinnable), **Trash**, **Delete this chat** (red).
 
-### Unread / read dots
-
-Blue = manually unread, amber = official waiting-for-input, green = official completion notice, spinner = running. Click amber/green to mark read in place; click blue to clear; click blank to mark unread; opening a session marks it read. The official sidebar row shows a matching blue dot (matched by title text).
-
-## How it works
+## 🔧 How it works
 
 | Layer | Implementation |
-|---|---|
-| Host | `src/index.ts` registers 10 routes: `POST /delete`, `POST /restore`, `POST /purge`, `GET /trash`, `POST /open-folder`, `POST /pause`, `POST /move-workspace`, `GET|POST /compaction-threshold`, `POST /rename` (live: official `sessionTitle.rename`; cold: appends a `session/title` event frame + updates the persisted projection cache), `POST /export` (decodes the log via `sessionPersistence.inspect` and renders Markdown / JSON). Uses `ctx.sessionPersistence`, `ctx.workspaceRegistry`, `ctx.storageDomain`, `ctx.agentPresets`, `ctx.agents` (rejects delete/move of live sessions) |
-| Client | `src/client/index.ts` registers a Settings section via the official `settings.section` slot, lists sessions via `useSessions` / `useWorkspaces`, calls host routes; the drawer subscribes via `sessions.list` (ObservableSnapshot); purged ids are remembered in localStorage so live sessions do not "resurrect" after a refresh |
+| --- | --- |
+| Host | `src/index.ts` registers 10 routes: `POST /delete`, `POST /restore`, `POST /purge`, `GET /trash`, `POST /open-folder`, `POST /pause`, `POST /move-workspace`, `GET|POST /compaction-threshold`, `POST /rename` (live: official `sessionTitle.rename`; cold: appends an event frame + updates the persisted projection cache), `POST /export` (renders Markdown / JSON via `sessionPersistence.inspect`). Services: `ctx.sessionPersistence` / `ctx.workspaceRegistry` / `ctx.storageDomain` / `ctx.agentPresets` / `ctx.agents` |
+| Client | `src/client/index.ts` registers a Settings section via the official `settings.section` slot; `useSessions` / `useWorkspaces` feeds; the drawer subscribes via `sessions.list` (ObservableSnapshot); purged ids are kept in localStorage so sessions do not "resurrect" after a refresh |
 
-- **Unread**: manual unread set is stored in the shared localStorage key `dsh.session-unread.v1`; official dots are driven by `pendingInteraction` / `completed` / `running`; the sidebar dot is a MutationObserver decoration matched by title text
-- **Move to workspace**: the host reads the raw zstd session log, rewrites the **first frame** to contain exactly the one-line session header (with `cwd` updated to the target workspace path) and keeps the event frames untouched (DSH requires the first frame to be exactly one header line; a single-frame rewrite is rejected as corrupt). The log directory is renamed into the target workspace, then the rewritten file is written back; finally workspace bookkeeping is updated (detach from the old group, attach to the new one). Any failure rolls back: **rename the directory back first**, then restore the original bytes — never delete-then-rename
-- **Session rename**: titles are `session/title` events in the log (official `@deepseek-ai/dsh-session-title`; source `user` pins the title). Live sessions use the official `rename`; for cold sessions the host computes the next seq (handling packed chunk rows via `seq0` + member span), appends one event frame (the zstd first frame still holds only the header line), and writes the `title` row into the official persisted projection cache (`session_projcache`, `ver: 1` matches the official unit version) so list rows and the sidebar update immediately
-- **Export**: the host uses official `sessionPersistence.inspect` for a decoded, balanced event view (packed chunk rows restored, torn tails excluded); the builders are pure functions (`src/export.ts`, unit-tested). Markdown renders turns / user / assistant messages and tool calls/results (results capped at 4000 chars); JSON is the full lossless event log
-- **Compaction threshold**: persisted in the `dsh_delete_session` storage domain; for a user default preset it is also written to the resolved `agent.cordis.yml` (system presets stay read-only). The host applies it to every preset's compaction config in the `agent/pre-step` hook
-- Deletes go through the official archive channel first, so the sidebar hides the session immediately
+- **Rename**: titles are `session/title` log events (official `@deepseek-ai/dsh-session-title`; source `user` pins the title). Cold sessions get a host-appended event frame (seq continuation handles packed chunk rows) plus a `session_projcache` row so list rows and the sidebar update immediately
+- **Export**: official `sessionPersistence.inspect` gives a decoded, balanced event view; builders are pure functions (`src/export.ts`, unit-tested)
+- **Move to workspace**: rewrites the zstd log's **first frame** to exactly the one-line session header (with `cwd` updated) and keeps event frames; the directory is renamed into the target workspace; bookkeeping is updated (detach + attach). Any failure rolls back: **rename the directory back first**, then restore original bytes — never delete-then-rename
+- **Continue on archived sessions**: the official workspace projection clears the selection while the current session stays archived, so the plugin restores (un-archives) and refreshes the workspace baseline before opening
+- **Unread**: manual unread set lives in the shared `dsh.session-unread.v1` localStorage key; official dots are driven by `pendingInteraction` / `completed` / `running`
+- **Compaction threshold**: persisted in the storage domain and written to the user preset's `agent.cordis.yml` (system presets stay read-only); applied to every preset's compaction config in the `agent/pre-step` hook
 - Trash entries live in `~/.dsh/storages/dsh_delete_session.json`; files in `~/.dsh/dsh-delete-session-trash/`
-- Workspace bookkeeping is reconciled by the registry's reindex on next boot
 - No system-prompt changes, no new model tools — zero impact on tokens and model behavior
 
-## Privacy & security
+## 🔒 Privacy & security
 
-- **Fully local**: every operation (delete, restore, move, stats, threshold) touches only files under `~/.dsh` and browser localStorage — **no telemetry, no analytics, no network requests**
-- Moving a session merely relocates the local log directory and updates metadata; nothing is uploaded
-- The plugin never modifies DSH core; uninstalling it leaves all sessions untouched
+- **Fully local**: every operation touches only files under `~/.dsh` and browser localStorage — **no telemetry, no analytics, no network requests**
+- Move / export / rename only operate on local logs and metadata; nothing is uploaded
+- The plugin never modifies DSH core; uninstalling leaves all sessions untouched
 
-## Limitations
+## ⚠️ Limitations
 
 - Running sessions cannot be deleted (button disabled + server-side refusal)
-- Running / loaded (live) sessions cannot be moved — pause first, or restart `dsh web` to unload
+- Running / loaded (live) sessions cannot be moved — pause first, or restart `dsh web`
 - Subagent sessions can be deleted (when not running), including orphans
-- Purged session ids remain in localStorage (prevents refresh resurrection) and in the archive set (harmless)
-- Sidebar unread dots match by title text; duplicate titles share a dot (the drawer matches by real session id and is unaffected)
+- Purged session ids remain in localStorage and in the archive set (harmless, prevents refresh resurrection)
+- Sidebar unread dots match by title text; duplicate titles share a dot (the panel / drawer match by real session id and are unaffected)
 
-## Compatibility
+## 📄 Compatibility
 
-Currently targets DSH `0.1.0-rc.6` (uses the `settings.section` / `settings.general.item` / `conversation.session.header.utilities` slots and the `ctx.sessionPersistence` / `ctx.workspaceRegistry` / `ctx.agents` / `ctx.storageDomain` / `ctx.agentPresets` services; runtime `@deepseek-ai/*` packages are provided by the DSH host and resolved from the global install). Adaptations may be needed after DSH upgrades change slots or service APIs.
+- Targets DSH `0.1.0-rc.6` (`settings.section` / `settings.general.item` / `conversation.session.header.utilities` slots; `ctx.sessionPersistence` / `ctx.workspaceRegistry` / `ctx.agents` / `ctx.storageDomain` / `ctx.agentPresets` services)
+- Runtime `@deepseek-ai/*` packages are provided by the DSH host (resolved from the global install)
+- Adaptations may be needed after DSH upgrades change slots or service APIs
 
-## Development
+## 🛠️ Development
 
 ```sh
 pnpm install        # deps come from the npm registry — builds on any machine
 pnpm run check      # typecheck + test + build
-pnpm pack           # produces dsh-session-manager-0.3.0.tgz (for GitHub Releases)
+pnpm pack           # produces dsh-session-manager-<version>.tgz (for GitHub Releases)
 ```
 
-`lib/` is committed build output — rebuild and commit it after source changes (so `github:` installs work without a build step).
+- `lib/` is committed build output — rebuild and commit it after source changes (so `github:` installs work without a build step)
+- Every push / PR runs `pnpm run check` on GitHub Actions (see the build badge)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 
-## Credits
+## 🤝 Contributing & license
 
-Forked from [dream12347/dsh-session-manager](https://github.com/dream12347/dsh-session-manager) (MIT), adding "move to workspace" plus related fixes on top of all original features. Original author & contributors: [dream12347](https://github.com/dream12347), [DoggyHU](https://github.com/DoggyHU), [cmj799](https://github.com/cmj799), [Chen5173](https://github.com/Chen5173).
-
-<sub><span style="opacity:.6">If you find this useful, a ⭐ would be appreciated!</span></sub>
+- Issues / PRs welcome: feature requests, bug reports, translations
+- Forked from [dream12347/dsh-session-manager](https://github.com/dream12347/dsh-session-manager) (MIT) — thanks to the original author
+- Released under the [MIT License](LICENSE), © dsh-session-manager contributors
