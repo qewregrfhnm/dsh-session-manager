@@ -18,6 +18,10 @@ A full-featured session manager for the DeepSeek Harness Web UI, reachable from 
 - **Session drawer** (pinnable, closes on outside click) with a per-row **More** menu: stats / folder / fork / **Move to…**
 - **Workspace management**: sessions grouped by workspace, sortable by last-used (newest/oldest), drag workspace headers to reorder (insert / swap / move to end), hover actions: pin to top / rename / delete
 - **Move to workspace**: move any non-live session (log folder, session-header cwd, and workspace bookkeeping) into another registered workspace — effective immediately, survives restarts
+- **Search & filter**: a top search box filters by title / working directory in real time, plus status chips (All / Running / Unread / Archived)
+- **Drag to move**: drag a session row onto a target workspace header to move it (drop target highlights); running sessions are not draggable
+- **Batch move**: select several sessions, click "Move to…" and pick a target workspace to move them at once (running sessions are skipped and reported)
+- **Move to a new workspace**: the "Move to…" menu gains "＋ New workspace (session directory)" — registers the session's own working directory as a workspace and moves it there, giving unregistered-path sessions a home
 - **Context-compaction threshold** (General settings): auto-compact at 17%–90% of the model window (1M tokens), keeping the latest 16% verbatim; applies to **all agent presets** (saved instantly + persisted + reapplied on restart)
 - Deletion is blocked only for sessions currently thinking; the currently open (idle) session can be deleted
 - Subagent sessions can be deleted (when not running), including orphaned subagents whose parent is gone
@@ -68,6 +72,9 @@ dsh plugin --profile web add /absolute/path/to/dsh-session-manager-0.3.0.tgz
 4. Delete → session goes to the **Trash** collapsible (keeps latest 10)
 5. Trash: **Restore** (back to the list) or **Purge** (permanent)
 6. Rows keep a single **Delete** button; everything else lives in the **More** menu: Continue / Pause / Restore (archived) / Fork / Stats / Folder / Move to… — session names are no longer covered by buttons
+7. The top **search box** filters by title / directory; **status chips**: All / Running / Unread / Archived
+8. **Drag a session row** onto a workspace header to move it (dashed highlight); **batch move**: select rows, click "Move to…" and pick a workspace
+9. The "Move to…" menu's **＋ New workspace (session directory)** registers the session's original directory as a new workspace and moves it in
 7. Workspace header hover actions: **pin to top** / **rename** / **delete**
 8. Drag workspace headers to reorder (insert above/below, swap on top, drop to end)
 9. Sort toggle: newest-first / oldest-first

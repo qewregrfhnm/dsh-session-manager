@@ -27,7 +27,7 @@ import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { ConnectionHandle, HistoryEntry, SessionId as WireSessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import type { WorkspaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import { Button, IconTrashOutline16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import { createElement, Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
+import { createElement, Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent as ReactChangeEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import {
   COMPACTION_THRESHOLD_ROUTE,
@@ -499,6 +499,55 @@ const STYLE = `
 .dsh-delete-session__move-menu {
   top: -4px;
   right: calc(100% + 4px);
+}
+/* Session search + status filter bar. */
+.dsh-delete-session__filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 8px;
+  flex-wrap: wrap;
+}
+.dsh-delete-session__search {
+  flex: 1 1 180px;
+  min-width: 140px;
+  padding: 5px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base, #ffffff);
+  color: var(--dsw-alias-label-primary, #0f1115);
+  font-size: 12px;
+  outline: none;
+}
+.dsh-delete-session__search:focus {
+  border-color: var(--dsw-alias-accent, #2563eb);
+}
+.dsh-delete-session__filter-chips {
+  display: flex;
+  gap: 4px;
+}
+.dsh-delete-session__chip {
+  padding: 3px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dsh-delete-session__chip--active {
+  background: var(--dsw-alias-accent, #2563eb);
+  border-color: var(--dsw-alias-accent, #2563eb);
+  color: #ffffff;
+}
+/* Session-row drag onto a workspace header: drop-target highlight. */
+.dsh-delete-session__group-label[data-drop-session-active] {
+  outline: 2px dashed var(--dsw-alias-accent, #2563eb);
+  outline-offset: -2px;
+}
+.dsh-delete-session__row[draggable='true'] {
+  cursor: grab;
 }
 .dsh-delete-session__checkbox {
   flex: none;
@@ -987,6 +1036,18 @@ function stringsOf() {
         movedTo: (title: string) => `已移动到「${title}」`,
         moveFailed: (msg: string) => `移动失败：${msg}`,
         moveLive: '（会话正在运行，无法移动）',
+        moveToNewWorkspace: '＋新建工作区（会话所在目录）',
+        searchPlaceholder: '搜索标题或目录…',
+        filterAll: '全部',
+        filterRunning: '运行中',
+        filterUnread: '未读',
+        filterArchived: '已归档',
+        noMatch: '没有匹配的会话',
+        dragToMoveHint: '拖到工作区标题上移动',
+        batchMove: '移动到…',
+        batchMoved: (n: number) => `已移动 ${n} 个会话`,
+        batchMoveFailed: (n: number, total: number) => `批量移动失败（${total - n}/${total}）`,
+        batchMoveSkipped: (n: number) => `（跳过 ${n} 个运行中的会话）`,
         deleteCurrent: '删除本对话',
         deleteCurrentConfirm: '确定删除当前对话吗？将移入回收站，可在「会话管理」中恢复或彻底删除。',
         deleteCurrentFailed: '删除当前对话失败',
@@ -1085,6 +1146,18 @@ function stringsOf() {
         movedTo: (title: string) => `Moved to "${title}"`,
         moveFailed: (msg: string) => `Move failed: ${msg}`,
         moveLive: ' (the session is running; it cannot be moved)',
+        moveToNewWorkspace: '＋ New workspace (session directory)',
+        searchPlaceholder: 'Search title or directory…',
+        filterAll: 'All',
+        filterRunning: 'Running',
+        filterUnread: 'Unread',
+        filterArchived: 'Archived',
+        noMatch: 'No matching sessions',
+        dragToMoveHint: 'Drag onto a workspace header to move',
+        batchMove: 'Move to…',
+        batchMoved: (n: number) => `Moved ${n} sessions`,
+        batchMoveFailed: (n: number, total: number) => `Batch move failed (${total - n}/${total})`,
+        batchMoveSkipped: (n: number) => ` (skipped ${n} running)`,
         deleteCurrent: 'Delete this session',
         deleteCurrentConfirm: 'Delete this conversation? It moves to the trash, where you can restore or permanently delete it.',
         deleteCurrentFailed: 'Failed to delete this session',
@@ -1133,6 +1206,11 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   const unread = useUnread()
   const [moveOpenId, setMoveOpenId] = useState<string | null>(null)
   const [moreOpenId, setMoreOpenId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'unread' | 'archived'>('all')
+  const [dragSessionId, setDragSessionId] = useState<string | null>(null)
+  const [dropSessionWorkspaceId, setDropSessionWorkspaceId] = useState<string | null>(null)
+  const [batchMoveOpen, setBatchMoveOpen] = useState(false)
   const [newestFirst, setNewestFirst] = useState(true)
   const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null)
   // Drop slot: 'before:<id>' inserts before that workspace, 'end' appends.
@@ -1151,18 +1229,19 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   }, [])
   useEffect(() => () => window.clearTimeout(noticeTimer.current), [])
 
-  // Close the per-row "More" menu on outside pointer-down.
+  // Close the per-row "More" / batch-move menus on outside pointer-down.
   useEffect(() => {
-    if (moreOpenId === null && moveOpenId === null) return
+    if (moreOpenId === null && moveOpenId === null && !batchMoveOpen) return
     const onPointerDown = (event: MouseEvent): void => {
       if (!(event.target instanceof Element)) return
       if (event.target.closest('.dsh-delete-session__more-wrap') !== null) return
       setMoreOpenId(null)
       setMoveOpenId(null)
+      setBatchMoveOpen(false)
     }
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [moreOpenId, moveOpenId])
+  }, [moreOpenId, moveOpenId, batchMoveOpen])
 
   const loadTrash = useCallback(async (): Promise<void> => {
     try {
@@ -1186,9 +1265,8 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   // Move one session into another workspace (host re-accounts the session and
   // moves its artifact). The official workspace feed refreshes over the wire;
   // the trash is unaffected.
-  const handleMoveToWorkspace = useCallback(async (sessionId: string, workspaceId: string): Promise<void> => {
-    setMoveOpenId(null)
-    setBusyId(sessionId)
+  // Silent move primitive: returns an error message on failure, null on success.
+  const performMove = useCallback(async (sessionId: string, workspaceId: string): Promise<string | null> => {
     try {
       const response = await fetch(MOVE_WORKSPACE_ROUTE, {
         method: 'POST',
@@ -1199,20 +1277,80 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
       if (!response.ok || data.ok !== true) {
         const suffix = data.error === 'session-live' ? strings.moveLive : ''
         const detail = data.detail !== undefined ? `（${data.detail}）` : ''
-        showNotice({ kind: 'error', text: strings.moveFailed(data.error ?? `HTTP ${response.status}`) + suffix + detail })
-        return
+        return strings.moveFailed(data.error ?? `HTTP ${response.status}`) + suffix + detail
       }
+      return null
+    } catch {
+      return strings.moveFailed('network')
+    }
+  }, [strings])
+
+  const handleMoveToWorkspace = useCallback(async (sessionId: string, workspaceId: string): Promise<void> => {
+    setMoveOpenId(null)
+    setBusyId(sessionId)
+    const err = await performMove(sessionId, workspaceId)
+    if (err !== null) {
+      showNotice({ kind: 'error', text: err })
+    } else {
       const target = workspaces.items.find((view) => view.workspaceId === workspaceId)
       showNotice({ kind: 'ok', text: strings.movedTo(target?.title || target?.path || workspaceId) })
+    }
+    setBusyId(null)
+  }, [performMove, workspaces.items, showNotice, strings])
+
+  // Register the session's own working directory as a new workspace, then move it there.
+  const handleMoveToNewWorkspace = useCallback(async (sessionId: string, cwd: string): Promise<void> => {
+    setMoveOpenId(null)
+    setBusyId(sessionId)
+    try {
+      const res = await workspaceActions.create({ path: cwd } as never)
+      const view = (res as { workspace?: { workspaceId: string; title?: string; path: string } }).workspace
+      if (view === undefined) {
+        showNotice({ kind: 'error', text: strings.moveFailed('workspace-create') })
+        return
+      }
+      const err = await performMove(sessionId, view.workspaceId)
+      if (err !== null) showNotice({ kind: 'error', text: err })
+      else showNotice({ kind: 'ok', text: strings.movedTo(view.title || view.path) })
     } catch {
-      showNotice({ kind: 'error', text: strings.moveFailed('network') })
+      showNotice({ kind: 'error', text: strings.moveFailed('workspace-create') })
     } finally {
       setBusyId(null)
     }
-  }, [strings, showNotice, workspaces.items])
+  }, [workspaceActions, performMove, showNotice, strings])
 
   const archivedSet = new Set(workspaces.archivedSessionIds)
   const trashIds = new Set((trash ?? []).map((entry) => entry.sessionId))
+
+  // Batch-move every selected session into one target workspace.
+  const handleBatchMove = useCallback(async (workspaceId: string): Promise<void> => {
+    setBatchMoveOpen(false)
+    const targetView = workspaces.items.find((view) => view.workspaceId === workspaceId)
+    const ids = [...selectedIds].filter((raw) => {
+      const id = raw as SessionId
+      const s = list.byId[id]
+      if (s === undefined || s.running || id === list.current || archivedSet.has(id)) return false
+      return !(targetView?.sessionIds.includes(id) ?? false)
+    })
+    if (ids.length === 0) {
+      showNotice({ kind: 'error', text: strings.moveNoTargets })
+      return
+    }
+    const skipped = selectedIds.size - ids.length
+    let ok = 0
+    let firstError: string | null = null
+    for (const id of ids) {
+      const err = await performMove(id, workspaceId)
+      if (err === null) ok += 1
+      else if (firstError === null) firstError = err
+    }
+    if (firstError === null) {
+      showNotice({ kind: 'ok', text: strings.batchMoved(ok) + (skipped > 0 ? strings.batchMoveSkipped(skipped) : '') })
+    } else {
+      showNotice({ kind: 'error', text: strings.batchMoveFailed(ok, ids.length) + (skipped > 0 ? strings.batchMoveSkipped(skipped) : '') + '：' + firstError })
+    }
+    setSelectedIds(new Set())
+  }, [selectedIds, workspaces.items, list.byId, list.current, archivedSet, performMove, showNotice, strings])
   // Blank sessions (created, never messaged) are hidden, mirroring the
   // official sidebar — they have no content to manage and no title to show.
   const summaries: SessionSummary[] = list.ids
@@ -1222,16 +1360,27 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   const activeRows = summaries.filter((session) => !archivedSet.has(session.id))
   const archivedRows = summaries.filter((session) => archivedSet.has(session.id) && !trashIds.has(session.id))
 
+  // Search query + status filter (client-side, no host round trip).
+  const queryNorm = query.trim().toLowerCase()
+  const matchesQuery = (s: SessionSummary): boolean =>
+    queryNorm === '' || s.displayTitle.toLowerCase().includes(queryNorm) || (s.cwd ?? '').toLowerCase().includes(queryNorm)
+  const filteredActive = activeRows.filter((s) =>
+    matchesQuery(s) &&
+    (statusFilter === 'all' || (statusFilter === 'running' && s.running) || (statusFilter === 'unread' && unread.has(s.id))))
+  const filteredArchived = archivedRows.filter((s) => matchesQuery(s))
+  const showActiveSection = statusFilter !== 'archived'
+  const showArchivedSection = statusFilter === 'all' || statusFilter === 'archived'
+
   // Group active sessions by workspace; within each group sort by last use
   // (updatedAt), newest first by default, toggled by the header sort button.
   const sortActive = (rows: SessionSummary[]): SessionSummary[] =>
     [...rows].sort((a, b) => (newestFirst ? b.updatedAt - a.updatedAt : a.updatedAt - b.updatedAt))
   const activeGroups: { workspaceId: string; title: string; rows: SessionSummary[] }[] = []
   for (const view of workspaces.items) {
-    const rows = sortActive(activeRows.filter((session) => view.sessionIds.includes(session.id)))
+    const rows = sortActive(filteredActive.filter((session) => view.sessionIds.includes(session.id)))
     if (rows.length > 0) activeGroups.push({ workspaceId: view.workspaceId, title: view.title || view.path, rows })
   }
-  const ungroupedActive = sortActive(activeRows.filter((session) =>
+  const ungroupedActive = sortActive(filteredActive.filter((session) =>
     !workspaces.items.some((view) => view.sessionIds.includes(session.id))))
   if (ungroupedActive.length > 0) activeGroups.push({ workspaceId: '__ungrouped__', title: strings.ungrouped, rows: ungroupedActive })
   groupsRef.current = activeGroups
@@ -1309,12 +1458,31 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
     const workspaceSelectable = group.rows.filter((session) => !session.running && session.id !== list.current)
     const workspaceAllSelected = workspaceSelectable.length > 0 && workspaceSelectable.every((session) => selectedIds.has(session.id))
     const workspaceSomeSelected = workspaceSelectable.some((session) => selectedIds.has(session.id))
+    const sessionDropTarget = dragSessionId !== null && group.workspaceId !== '__ungrouped__'
     return createElement('div', {
       className: 'dsh-delete-session__group-label' + (draggable ? ' dsh-delete-session__group-label--drag' : ''),
       'data-drag-workspace': group.workspaceId,
       'data-dragging': dragWorkspaceId === group.workspaceId || undefined,
       'data-drop-swap': dropSlot === `swap:${group.workspaceId}` || undefined,
-      title: draggable ? strings.workspaceDragHint : undefined,
+      'data-drop-session': sessionDropTarget ? group.workspaceId : undefined,
+      'data-drop-session-active': dropSessionWorkspaceId === group.workspaceId || undefined,
+      title: dragSessionId !== null ? strings.dragToMoveHint : (draggable ? strings.workspaceDragHint : undefined),
+      onDragOver: sessionDropTarget ? (e: DragEvent) => {
+        if (e.dataTransfer === null) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setDropSessionWorkspaceId(group.workspaceId)
+      } : undefined,
+      onDragLeave: () => {
+        if (dropSessionWorkspaceId === group.workspaceId) setDropSessionWorkspaceId(null)
+      },
+      onDrop: sessionDropTarget ? (e: DragEvent) => {
+        e.preventDefault()
+        const id = dragSessionId
+        setDragSessionId(null)
+        setDropSessionWorkspaceId(null)
+        if (id !== null && !group.rows.some((s) => s.id === id)) void handleMoveToWorkspace(id, group.workspaceId)
+      } : undefined,
       onPointerDown: draggable ? (e: PointerEvent) => {
         if (e.button !== 0) return
         e.preventDefault()
@@ -1504,7 +1672,7 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
   const toggleSelectAll = useCallback((): void => {
     setSelectedIds((previous) => {
       const next = new Set(previous)
-      const selectable = activeRows.filter((session) => !session.running && session.id !== list.current)
+      const selectable = filteredActive.filter((session) => !session.running && session.id !== list.current)
       const allSelected = selectable.length > 0 && selectable.every((session) => next.has(session.id))
       for (const session of selectable) {
         if (allSelected) next.delete(session.id)
@@ -1512,7 +1680,7 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
       }
       return next
     })
-  }, [activeRows, list.current])
+  }, [filteredActive, list.current])
 
   const toggleSelectWorkspace = useCallback((group: { workspaceId: string; rows: SessionSummary[] }): void => {
     setSelectedIds((previous) => {
@@ -1812,6 +1980,7 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
     if (isArchived) metaParts.push(strings.archived)
     if (protectedReason !== '' && !isCurrent) metaParts.push(protectedReason)
     const statsOpen = statsId === session.id
+    const rowDraggable = !isArchived && !isRunning && !busy
     return createElement('li', {
       key: session.id,
       className: 'dsh-delete-session__row',
@@ -1819,6 +1988,16 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
       'data-current-label': strings.current,
       'data-archived': isArchived || undefined,
       'data-stats-open': statsOpen || undefined,
+      draggable: rowDraggable || undefined,
+      'data-drag-session': dragSessionId === session.id || undefined,
+      title: rowDraggable ? strings.dragToMoveHint : undefined,
+      onDragStart: rowDraggable ? (e: DragEvent) => {
+        if (e.dataTransfer === null) return
+        e.dataTransfer.setData('text/plain', session.id)
+        e.dataTransfer.effectAllowed = 'move'
+        setDragSessionId(session.id)
+      } : undefined,
+      onDragEnd: rowDraggable ? () => setDragSessionId(null) : undefined,
     },
       createElement('input', {
         type: 'checkbox',
@@ -1966,6 +2145,18 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
                     disabled: true,
                   }, strings.moveNoTargets)]
             })(),
+            createElement('button', {
+              type: 'button',
+              key: '__new__',
+              className: 'dsh-delete-session__more-item',
+              disabled: busy || isArchived || session.cwd === undefined,
+              title: strings.moveToWorkspace,
+              onClick: () => {
+                setMoveOpenId(null)
+                setMoreOpenId(null)
+                if (session.cwd !== undefined) void handleMoveToNewWorkspace(session.id, session.cwd)
+              },
+            }, strings.moveToNewWorkspace),
           ),
         ),
       ),
@@ -2029,20 +2220,66 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
         onClick: () => setNewestFirst((value) => !value),
         children: newestFirst ? strings.sortNewest : strings.sortOldest,
       }),
-      createElement('span', { className: 'dsh-delete-session__count' }, strings.count(activeRows.length)),
+      createElement('span', { className: 'dsh-delete-session__count' }, strings.count(filteredActive.length)),
+    ),
+    createElement('div', { className: 'dsh-delete-session__filter' },
+      createElement('input', {
+        type: 'search',
+        className: 'dsh-delete-session__search',
+        placeholder: strings.searchPlaceholder,
+        'aria-label': strings.searchPlaceholder,
+        value: query,
+        onChange: (e: ReactChangeEvent<HTMLInputElement>) => setQuery(e.currentTarget.value),
+      }),
+      createElement('div', { className: 'dsh-delete-session__filter-chips' },
+        (['all', 'running', 'unread', 'archived'] as const).map((key) =>
+          createElement('button', {
+            type: 'button',
+            key: key,
+            className: 'dsh-delete-session__chip' + (statusFilter === key ? ' dsh-delete-session__chip--active' : ''),
+            onClick: () => setStatusFilter(key),
+          },
+            key === 'all' ? strings.filterAll
+              : key === 'running' ? strings.filterRunning
+                : key === 'unread' ? strings.filterUnread
+                  : strings.filterArchived),
+        ),
+      ),
     ),
     activeRows.length > 0 && createElement('div', { className: 'dsh-delete-session__batch' },
       createElement('label', { className: 'dsh-delete-session__batch-select-all' },
         createElement('input', {
           type: 'checkbox',
-          checked: activeRows.some((session) => !session.running && session.id !== list.current)
-            && activeRows.every((session) => session.running || session.id === list.current || selectedIds.has(session.id)),
+          checked: filteredActive.some((session) => !session.running && session.id !== list.current)
+            && filteredActive.every((session) => session.running || session.id === list.current || selectedIds.has(session.id)),
           onChange: () => toggleSelectAll(),
           'aria-label': strings.selectAll,
         }),
         createElement('span', null, strings.selectAll),
       ),
       createElement('span', { className: 'dsh-delete-session__batch-count' }, strings.selectedCount(selectedIds.size)),
+      createElement('span', { className: 'dsh-delete-session__more-wrap' },
+        createElement(Button, {
+          className: 'dsh-row-action',
+          variant: 'outline',
+          size: 'sm',
+          disabled: selectedIds.size === 0,
+          title: strings.batchMove,
+          onClick: () => setBatchMoveOpen((open) => !open),
+          children: strings.batchMove,
+        }),
+        batchMoveOpen && createElement('div', { className: 'dsh-delete-session__more-menu' },
+          ...workspaces.items
+            .filter((view) => view.workspaceId !== '__ungrouped__')
+            .map((view) =>
+              createElement('button', {
+                type: 'button',
+                key: view.workspaceId,
+                className: 'dsh-delete-session__more-item',
+                onClick: () => void handleBatchMove(view.workspaceId),
+              }, view.title || view.path)),
+        ),
+      ),
       createElement(Button, {
         className: 'dsh-row-action dsh-row-action--danger',
         variant: 'outline',
@@ -2057,10 +2294,12 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
     notice !== null && createElement('div', {
       className: `dsh-delete-session__notice dsh-delete-session__notice--${notice.kind}`,
     }, notice.text),
-    activeRows.length === 0
-      ? createElement('div', { className: 'dsh-delete-session__empty' }, strings.empty)
-      : activeGroups.map((group, index) => renderWorkspaceGroup(group, index)),
-    archivedRows.length > 0 && createElement('div', { className: 'dsh-delete-session__group' },
+    !showActiveSection
+      ? null
+      : filteredActive.length === 0
+        ? createElement('div', { className: 'dsh-delete-session__empty' }, queryNorm !== '' || statusFilter !== 'all' ? strings.noMatch : strings.empty)
+        : activeGroups.map((group, index) => renderWorkspaceGroup(group, index)),
+    showArchivedSection && filteredArchived.length > 0 && createElement('div', { className: 'dsh-delete-session__group' },
       createElement('button', {
         type: 'button',
         className: 'dsh-delete-session__group-toggle',
@@ -2068,14 +2307,14 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
         'aria-expanded': archivedOpen || undefined,
       },
         createElement('span', { className: 'dsh-delete-session__group-toggle-label' },
-          `${strings.archivedGroup} (${archivedRows.length})`,
+          `${strings.archivedGroup} (${filteredArchived.length})`,
         ),
         createElement('span', { className: 'dsh-delete-session__group-toggle-chevron' },
           archivedOpen ? strings.collapse : strings.expand,
         ),
       ),
       archivedOpen && createElement('ul', { className: 'dsh-delete-session__list' },
-        ...archivedRows.map((session) => renderRow(session, true)),
+        ...filteredArchived.map((session) => renderRow(session, true)),
       ),
       createElement('div', { className: 'dsh-delete-session__group-hint' }, strings.archivedHint),
     ),
