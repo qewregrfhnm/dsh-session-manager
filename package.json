@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-manager",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Full session management for the DSH web UI: delete (with trash/restore/purge), restore archived sessions, activity stats, continue/pause, fork to a new chat, unread markers, session rename, export transcripts as Markdown/JSON, open log folders, workspace grouping and sorting, and move sessions between workspaces. Plus a global context compaction threshold. No harness changes.",
   "type": "module",
   "main": "lib/index.js",

@@ -1852,12 +1852,35 @@ function SessionManager({ useSessions, useWorkspaces, api, sessions, workspaceAc
 
   // Continue a session: mark it read, open it through the browser sessions
   // service and close the settings panel so the user lands in the
-  // conversation.
-  const handleContinue = useCallback((sessionId: string): void => {
+  // conversation. The official workspace projection clears the selection
+  // while the current session stays archived, so an archived session must be
+  // un-archived (restored) and the workspace baseline refreshed BEFORE it can
+  // be opened.
+  const handleContinue = useCallback(async (sessionId: string): Promise<void> => {
     markRead(sessionId)
+    if (archivedSet.has(sessionId as SessionId)) {
+      setBusyId(sessionId)
+      try {
+        const response = await fetch(RESTORE_ROUTE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        })
+        const data = (await response.json().catch(() => ({}))) as ActionResultResponse
+        if (!response.ok || data.ok !== true) throw new Error(data.error ?? `HTTP ${response.status}`)
+        await (workspaceActions as unknown as { refresh?: () => Promise<unknown> }).refresh?.()
+      } catch (error) {
+        const code = error instanceof Error ? error.message : ''
+        const suffix = code !== '' ? ` (${code})` : ''
+        showNotice({ kind: 'error', text: strings.restoreFailed.replace('{title}', list.byId[sessionId as SessionId]?.displayTitle ?? sessionId) + suffix })
+        setBusyId(null)
+        return
+      }
+      setBusyId(null)
+    }
     sessions.open(sessionId as SessionId)
     close()
-  }, [sessions, close])
+  }, [sessions, close, archivedSet, workspaceActions, showNotice, strings, list.byId])
 
   // Fork the session into a new child conversation (official sessions.fork,
   // cut at the last completed turn), then open the child and close the panel.
@@ -2628,7 +2651,7 @@ export function apply(ctx: ClientContext): void {
   // also hosts the Session log button). Order, left to right:
   //   对话管理 (-40 host) → 对话管理按钮 (-30) → 删除本对话 (-10) → Session log (0)
   ctx.slots.inject('conversation.session.header.utilities', () => {
-    const common = () => ({ api, sessions })
+    const common = () => ({ api, sessions, workspaceActions: workspaces })
     const disposers = [
       ctx.slots.register({
         name: 'conversation.session.header.utilities',
@@ -2905,6 +2928,8 @@ function useDrawerState(): DrawerState {
 interface DrawerInjected {
   api: Pick<import('@deepseek-ai/dsh-api-remotes/client').IApiClient, 'sessions' | 'workspace'>
   sessions: import('@deepseek-ai/dsh-client-runtime/client').ISessions
+  /** Workspace service: refresh the archive baseline after a restore. */
+  workspaceActions?: import('@deepseek-ai/dsh-client-runtime/client').IWorkspaces
 }
 
 /** "对话管理" header button: open the drawer on the main list. */
@@ -2952,7 +2977,7 @@ interface DrawerRow {
 }
 
 /** The right drawer: full session management (list, archived, trash). */
-function SessionDrawer({ api, sessions }: DrawerInjected): ReactElement {
+function SessionDrawer({ api, sessions, workspaceActions }: DrawerInjected): ReactElement {
   const state = useDrawerState()
   const strings = useLocaleStrings()
   // Subscribe to the official session store (same source the sidebar uses):
@@ -3215,11 +3240,29 @@ function SessionDrawer({ api, sessions }: DrawerInjected): ReactElement {
     if (error !== null) showAlert(strings.folderFailed + ` (${error})`)
   }, [strings, postAction])
 
-  const handleContinue = useCallback((sessionId: string): void => {
+  const handleContinue = useCallback(async (sessionId: string): Promise<void> => {
     markRead(sessionId)
+    if (archivedSet.has(sessionId as SessionId)) {
+      // Same rule as the settings panel: the official projection clears the
+      // selection while the current session stays archived, so restore
+      // (unarchive) and refresh the workspace baseline before opening.
+      setBusyId(sessionId)
+      const error = await postAction(RESTORE_ROUTE, sessionId).catch((e) => e instanceof Error ? e.message : 'error')
+      if (error !== null) {
+        showAlert(strings.restoreFailed.replace('{title}', (rows ?? []).find((r) => r.sessionId === sessionId)?.title ?? sessionId) + ` (${error})`)
+        setBusyId(null)
+        return
+      }
+      try {
+        await (workspaceActions as unknown as { refresh?: () => Promise<unknown> } | undefined)?.refresh?.()
+      } catch {
+        // Best-effort: the archived-changed broadcast re-baselines anyway.
+      }
+      setBusyId(null)
+    }
     sessions.open(sessionId as SessionId)
     setDrawer({ open: false })
-  }, [sessions])
+  }, [sessions, archivedSet, postAction, showAlert, strings, rows, workspaceActions])
 
   // Fork the session into a new child conversation, then open the child and
   // close the drawer.
